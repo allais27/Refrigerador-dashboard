@@ -1,0 +1,1294 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Lecturas en vivo (Google Sheet) + Asistente</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:,">
+
+<style>
+  :root{ --bg:#0b1220; --panel:#111827; --muted:#94a3b8; --border:#1f2937; --fg:#e5e7eb; --accent:#22d3ee; }
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;}
+  header{padding:16px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:5}
+  h1{margin:0;font-size:18px}
+  main{padding:16px 20px;}
+
+  .controls{display:flex;gap:12px;align-items:center;margin:12px 0;}
+  .controls input[type="number"]{width:90px;padding:6px;border-radius:8px;border:1px solid var(--border);background:#0b1220;color:var(--fg)}
+  .controls label{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+  .controls button{padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:#13203d;color:#cfe3ff;cursor:pointer}
+  #status{color:var(--muted);font-size:12px}
+
+
+  /* Indicador de estado de hardware (ESP32) */
+  .hw-status{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    padding:4px 10px;
+    border-radius:999px;
+    font-size:12px;
+    border:1px solid var(--border);
+    background:#020617;
+  }
+  .hw-status .dot{
+    width:8px;
+    height:8px;
+    border-radius:999px;
+    background:#facc15; /* estado desconocido por defecto */
+  }
+  .hw-status.hw-on{
+    background:#052e16;
+    border-color:#16a34a;
+    color:#bbf7d0;
+  }
+  .hw-status.hw-on .dot{
+    background:#22c55e;
+  }
+  .hw-status.hw-off{
+    background:#450a0a;
+    border-color:#b91c1c;
+    color:#fecaca;
+  }
+  .hw-status.hw-off .dot{
+    background:#ef4444;
+  }
+  .hw-status.hw-unknown{
+    color:var(--muted);
+  }
+
+
+  
+  /* === CHARTS: grid responsive, sin overflow === */
+  .charts{
+    display:grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap:12px;
+    margin:12px 0;
+    align-items:stretch;
+  }
+  .charts canvas{
+    width:100%;
+    height:260px;          /* alto visible */
+    box-sizing:border-box;
+    background:#0d1425;
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:6px;
+  }
+
+    .chart-card{
+    height: 500px;               /* ⇠ ajusta este valor si las quieres aún más pequeñas */
+    background:#0d1425;
+    border:1px solid #1f2937;
+    border-radius:8px;
+    padding:6px;
+    box-sizing:border-box;
+  }
+  .chart-card canvas{
+    width:100%;
+    height:100% !important;      /* Chart.js llenará el contenedor */
+    display:block;
+  }
+
+  /* === TABLA: contenedor con scroll horizontal + zebra === */
+  .table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border);background:#0d1425}
+  table{width:100%;border-collapse:collapse;min-width:900px}
+  thead th{position:sticky;top:0;background:#0f1a2f;border-bottom:1px solid var(--border);padding:8px;text-align:left;font-size:13px}
+  tbody td{border-bottom:1px solid var(--border);padding:6px 8px;font-size:13px}
+  tbody tr:nth-child(even){background:#0f1629;}
+  tbody tr:hover{background:#13203d;}
+
+  .badge{padding:2px 8px;border-radius:999px;font-size:12px}
+  .badge-open{background:#3b1a1a;color:#fecaca;border:1px solid #7f1d1d}
+  .badge-closed{background:#132a1a;color:#bbf7d0;border:1px solid #14532d}
+
+  /* === ASISTENTE: minimizable === */
+  .assistant{width:380px;max-height:80vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden;position:fixed;right:20px;bottom:20px;z-index:10;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+  .assistant header{background:transparent;border:0;padding:12px 14px;display:flex;align-items:center;gap:10px}
+  .assistant header .dot{width:8px;height:8px;border-radius:99px;background:var(--accent)}
+  .assistant header h2{margin:0;font-size:14px}
+  .assistant .toggle{margin-left:auto;background:transparent;border:1px solid var(--border);color:var(--fg);border-radius:8px;padding:6px 8px;cursor:pointer}
+  .assistant .body{padding:12px;height:360px;overflow:auto;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:#0d1425}
+  .assistant .msg{display:flex;margin-bottom:10px;gap:10px}
+  .assistant .msg .b{padding:10px 12px;border-radius:10px;max-width:75%;white-space:pre-wrap;word-break:break-word}
+  .assistant .msg.user .b{background:#13203d;border:1px solid #1c2b4d}
+  .assistant .msg.bot  .b{background:#101b2f;border:1px solid #1a2743}
+  .assistant .msg.err  .b{background:#2a0f14;border:1px solid #3a151b;color:#fecaca}
+  .assistant footer{display:flex;padding:8px;gap:8px}
+  .assistant input[type="text"]{flex:1;background:#0b1220;border:1px solid var(--border);color:var(--fg);border-radius:10px;padding:10px 12px;outline:none}
+  .assistant button{background:var(--accent);color:#041018;border:0;border-radius:10px;padding:10px 14px;cursor:pointer;font-weight:600}
+  .status{padding:6px 12px;border-top:1px solid var(--border);background:#0b1220;color:#94a3b8;font-size:12px}
+
+  /* Estado colapsado */
+  .assistant.collapsed{width:260px;}
+  .assistant.collapsed .body,
+  .assistant.collapsed footer,
+  .assistant.collapsed .status{display:none;}
+</style>
+
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+</head>
+<body>
+  <header><h1>Lecturas en vivo del refrigerador</h1></header>
+
+  <main>
+<div class="controls">
+  <div>Filas máx: <input id="limit" type="number" value="200" min="50" step="10" /></div>
+
+  <!-- Indicador de estado del hardware (ESP32) -->
+  <div id="hwStatus" class="hw-status hw-unknown">
+    <span class="dot"></span>
+    <span class="label">Hardware: sin datos</span>
+  </div>
+
+  <!-- Controles que siguen existiendo pero ocultos para no afectar la lógica -->
+  <label style="display:none;">
+    <input id="useDataCtx" type="checkbox" checked>
+    Usar datos de la hoja en las respuestas
+  </label>
+
+  <button id="refresh" style="display:none;">Actualizar ahora</button>
+
+  <div id="status" style="display:none;">Se actualiza automáticamente cada 3 segundos.</div>
+</div>
+
+<div class="charts">
+  <div class="chart-card"><canvas id="tempChart"></canvas></div>
+  <div class="chart-card"><canvas id="humChart"></canvas></div>
+</div>
+
+<div class="table-wrap">
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th>Fecha y hora</th><th>Bote de helado 1(g)</th><th>Bote de helado 2(g)</th>
+          <th>T°1 (°C)</th><th>T°2 (°C)</th><th>Humedad1 (%)</th><th>Humedad2 (%)</th><th>Puerta</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    </div>
+  </main>
+
+  <!-- Asistente -->
+  <section class="assistant" id="assistant">
+    <header>
+      <span class="dot"></span>
+      <h2>Asistente</h2>
+      <span class="chip">Deekseek</span>
+      <button id="toggleChat" class="toggle" aria-expanded="true" title="Minimizar">▁</button>
+    </header>
+
+    <div class="body" id="chatBody" aria-live="polite"></div>
+
+    <footer>
+      <form id="chatForm" style="display:flex;gap:8px;flex:1">
+        <input id="chatInput" type="text" placeholder="Ej: promedio de balanza 1 en octubre" autocomplete="off" />
+        <button type="submit">Enviar</button>
+      </form>
+    </footer>
+
+    <div class="status" id="chatStatus">Listo</div>
+  </section>
+
+
+  
+  <!-- ================= LÓGICA ================= -->
+  <script type="module">
+    /* ====== CONFIG ====== */
+    const OR_PROXY_URL = "https://or-proxy.refrigerador.workers.dev/chat"; // ← AJÚSTALO
+    const OR_MODEL_ID  = "deepseek/deepseek-chat-v3-0324";
+    const SHEET_ID     = "1d9NtgC2QE3qoGD3V7gs1rs-yHQq5ta1vV-cjd_1TY0s";
+    const SHEET_NAME   = "Hoja 1";
+    const POLL_MS      = 3000;
+    // --- Nuevo: depender del modelo (sin respuestas locales)
+const RELY_ON_MODEL = true; // pon false si algún día quieres reactivar las respuestas locales
+
+// -------- Zona horaria de visualización (IANA) --------
+// Ejemplos: "America/Bogota" (UTC-5 fijo), "America/Chicago" (DST), "America/Lima"
+const DISPLAY_TIMEZONE = "America/Bogota";
+
+// Comprueba si la TZ es válida en este runtime
+function isValidTZ(tz){
+  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(new Date()); return true; }
+  catch { return false; }
+}
+
+// Devuelve una TZ válida (si la dada no lo es, usa la del navegador)
+function resolvedTZ(){
+  return isValidTZ(DISPLAY_TIMEZONE)
+    ? DISPLAY_TIMEZONE
+    : Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+// → "11/10/2025 16:46:15" (24h) en la TZ resuelta; nunca lanza
+function formatLocal(d) {
+  if (!(d instanceof Date) || isNaN(d)) return "";
+  const tz = resolvedTZ();
+  try {
+    const opts = { timeZone: tz, year:"numeric", month:"2-digit", day:"2-digit",
+                   hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false };
+    return new Intl.DateTimeFormat("es-ES", opts).format(d).replace(",", "");
+  } catch {
+    // Fallback súper seguro
+    return d.toLocaleString("es-ES", { hour12:false }).replace(",", "");
+  }
+}
+
+// "UTC-05:00" para la fecha dada en la TZ resuelta; nunca lanza
+function tzOffsetLabelFor(d){
+  try {
+    const tz = resolvedTZ();
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "shortOffset" })
+                    .formatToParts(d);
+    const off = parts.find(p => p.type === "timeZoneName")?.value || "UTC";
+    return off.replace("GMT", "UTC");
+  } catch { return "UTC"; }
+}
+
+
+
+    /* ====== UI ====== */
+    const statusEl   = document.getElementById('status');
+    const limitEl    = document.getElementById('limit');
+    const useDataCtx = document.getElementById('useDataCtx');
+    const refreshBtn = document.getElementById('refresh');
+    const tbody      = document.querySelector('#tbl tbody');
+    const hwStatusEl = document.getElementById('hwStatus');
+
+
+    const chatBody   = document.getElementById('chatBody');
+    const formEl     = document.getElementById('chatForm');
+    const inputEl    = document.getElementById('chatInput');
+    const chatStatEl = document.getElementById('chatStatus');
+    const setChatStatus = (t)=> chatStatEl.textContent = t;
+    const scrollChat = ()=> chatBody.scrollTop = chatBody.scrollHeight;
+
+    let tempChart, humChart;
+
+    function addMsg(role, text, isError=false){
+      const wrap = document.createElement('div');
+      wrap.className = `msg ${isError?'err':(role==='user'?'user':'bot')}`;
+      const b = document.createElement('div'); b.className = 'b'; b.textContent = text;
+      wrap.appendChild(b); chatBody.appendChild(wrap); scrollChat();
+    }
+
+    // 30 segundos sin datos nuevos => consideramos el hardware "apagado"
+    const HW_TIMEOUT_MS = 30000;
+
+    function updateHardwareStatusFromDate(lastDate){
+      if (!hwStatusEl) return;
+
+      let cls  = 'hw-status hw-unknown';
+      let text = 'Hardware: sin datos';
+
+      if (lastDate instanceof Date && !isNaN(lastDate.getTime())){
+        const ageMs = Date.now() - lastDate.getTime();
+        if (ageMs <= HW_TIMEOUT_MS){
+          cls  = 'hw-status hw-on';
+          text = 'Hardware: prendido';
+        } else {
+          cls  = 'hw-status hw-off';
+          text = 'Hardware: apagado';
+        }
+      }
+
+      hwStatusEl.className = cls;
+      const labelSpan = hwStatusEl.querySelector('.label');
+      if (labelSpan) {
+        labelSpan.textContent = text;
+      } else {
+        hwStatusEl.textContent = text;
+      }
+    }
+
+
+
+
+    /* ====== Utilidades ====== */
+// Promedio seguro: ignora no-números y NaN
+const avg = (arr) => {
+  const nums = (arr || []).filter(Number.isFinite);
+  return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+};
+    const fmtTS = d => { try { return d.toLocaleString(); } catch { return String(d); } };
+// ----- EXTRAER TEXTO DEL MODELO (cubre Chat Completions y Responses API)
+
+// Convierte a número *solo* si hay un valor válido.
+// Vacío, guiones, "NA", null/undefined => null (no contará en promedios)
+function toNum(v) {
+  if (v === null || v === undefined) return null;
+
+  if (typeof v === "number") {
+    return Number.isFinite(v) ? v : null;
+  }
+
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s || /^[-–—]$/.test(s) || /^na$/i.test(s)) return null; // vacío / guión / NA
+    const x = Number(s.replace(",", ".")); // soporta coma decimal
+    return Number.isFinite(x) ? x : null;
+  }
+
+  return null;
+}
+
+
+
+
+function extractAssistantText(anyResp) {
+  if (!anyResp) return null;
+  let obj = anyResp;
+  if (typeof obj === "string") {
+    try { obj = JSON.parse(obj); } catch { return null; }
+  }
+  // Chat Completions (OpenAI style)
+  if (obj?.choices?.length) {
+    return obj.choices[0]?.message?.content ?? null;
+  }
+  // Responses API de OpenRouter
+  if (obj?.output_text) return obj.output_text;
+  if (obj?.output)      return obj.output;
+  // Responses API con "raw" (donde vive la completion clásica)
+  if (obj?.raw?.choices?.length) {
+    return obj.raw.choices[0]?.message?.content ?? null;
+  }
+  return null;
+}
+
+// --- Detecta errores/rate-limit aunque el HTTP sea 200
+function isUpstreamErrorOrRateLimited(objOrStr) {
+  let s = "";
+  try { s = (typeof objOrStr === "string") ? objOrStr : JSON.stringify(objOrStr); } catch {}
+  if (!s) return false;
+  return (
+    /"ok"\s*:\s*false/.test(s) ||
+    /"status"\s*:\s*429/.test(s) ||
+    /rate[- ]limited/i.test(s) ||
+    /Provider returned error/i.test(s) ||
+    /code"\s*:\s*429/.test(s)
+  );
+}
+
+
+
+    function parseDateFromCell(v){
+      if (v instanceof Date && !isNaN(v)) return v;
+      if (typeof v === 'string'){
+        const s=v.trim();
+        let m=s.match(/^Date\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})(?:,\s*(\d{1,2}),\s*(\d{2})(?:,\s*(\d{2}))?)?\)$/);
+        if(m) return new Date(+m[1],+m[2],+m[3],+(m[4]||0),+(m[5]||0),+(m[6]||0));
+        m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+        if(m) return new Date(+m[3],+m[2]-1,+m[1],+(m[4]||0),+(m[5]||0),+(m[6]||0));
+        const d=new Date(s); if(!isNaN(d)) return d;
+      }
+      if (typeof v === 'number'){
+        if (v>1e12) return new Date(v);
+        if (v>1e9)  return new Date(v*1000);
+        const base = Date.UTC(1899,11,30);
+        return new Date(base + v*86400000);
+      }
+      return null;
+    }
+
+    /* ====== Google Sheet (GViz JSONP) ====== */
+    window.__sheetConfig = { id: SHEET_ID, name: SHEET_NAME };
+    function buildGVizUrlForCallback(limit, cbName){
+      const cfg = window.__sheetConfig;
+      const base = `https://docs.google.com/spreadsheets/d/${cfg.id}/gviz/tq?`;
+      const which = `sheet=${encodeURIComponent(cfg.name)}`;
+      const tq = encodeURIComponent(`select A,B,C,D,E,F,G,H order by A desc limit ${Math.max(2000, Math.min(limit, 50000))}`);
+      return `${base}${which}&headers=1&tqx=out:json;responseHandler:${cbName}&tq=${tq}&t=${Date.now()}`;
+    }
+    function fetchRowsJSONP(limit=20000){
+      return new Promise((resolve,reject)=>{
+        const cb='__gviz_'+Math.random().toString(36).slice(2);
+        window[cb]=(resp)=>{ try{
+          if(resp.status!=='ok') throw new Error('Respuesta no OK');
+          const rows=resp.table.rows.map(r=>r.c.map(c=>c?{v:c.v,f:c.f}:{v:null,f:null}));
+          resolve(rows);
+        }catch(e){reject(e);}finally{ delete window[cb]; s.remove(); } };
+        const s=document.createElement('script');
+        s.src=buildGVizUrlForCallback(limit,cb);
+        s.onerror=()=>{ delete window[cb]; reject(new Error('JSONP error')); };
+        document.body.appendChild(s);
+      });
+    }
+
+function buildGVizUrlForCallbackDoor(limit, cbName){
+  const cfg = window.__sheetConfig;
+  const base = `https://docs.google.com/spreadsheets/d/${cfg.id}/gviz/tq?`;
+  const which = `sheet=${encodeURIComponent(cfg.name)}`;
+  const lim = Math.max(2000, Math.min(limit, 50000));
+  const tq  = encodeURIComponent(`select A,H order by A desc limit ${lim}`);
+  return `${base}${which}&headers=1&tqx=out:json;responseHandler:${cbName}&tq=${tq}&t=${Date.now()}`;
+}
+
+function fetchRowsJSONPDoor(limit=50000){
+  return new Promise((resolve,reject)=>{
+    const cb='__gviz_'+Math.random().toString(36).slice(2);
+    window[cb]=(resp)=>{ try{
+      if(resp.status!=='ok') throw new Error('Respuesta no OK');
+      const rows=resp.table.rows.map(r=>r.c.map(c=>c?{v:c.v,f:c.f}:{v:null,f:null}));
+      resolve(rows);
+    }catch(e){reject(e);}finally{ delete window[cb]; s.remove(); } };
+    const s=document.createElement('script');
+    s.src=buildGVizUrlForCallbackDoor(limit,cb);
+    s.onerror=()=>{ delete window[cb]; reject(new Error('JSONP error')); };
+    document.body.appendChild(s);
+  });
+}
+
+function rowsDoorToObjects(rows){
+  return rows.map(c => ({
+    fechaHora: parseDateFromCell(c[0]?.v) || parseDateFromCell(c[0]?.f),
+    puerta:    (c[1]?.v ?? c[1]?.f ?? '').toString()
+  })).filter(r => r.fechaHora instanceof Date && !isNaN(r.fechaHora));
+}
+
+
+function rowsToObjects(rows){
+  return rows.map(c => {
+    const fechaHora = parseDateFromCell(c[0]?.v) || parseDateFromCell(c[0]?.f);
+    const hojaTexto = (c[0]?.f && String(c[0].f).trim()) || '';
+    const fechaTexto = hojaTexto || (fechaHora ? fechaHora.toLocaleString() : '');
+
+    return {
+      fechaHora,               // Date para gráficos/filtros
+      fechaTexto,              // ← TEXTO EXACTO como en la hoja (lo verá el modelo)
+      balanza1: toNum(c[1]?.v),
+      balanza2: toNum(c[2]?.v),
+      temp1:    toNum(c[3]?.v),
+      temp2:    toNum(c[4]?.v),
+      hum1:     toNum(c[5]?.v),
+      hum2:     toNum(c[6]?.v),
+      puerta:   (c[7]?.v ?? c[7]?.f ?? '').toString()
+    };
+  }).filter(r => r.fechaHora instanceof Date && !isNaN(r.fechaHora));
+}
+
+function isCompleteRow(r){
+  // Trata 0 como “missing” (según tu pedido)
+  const nums = [r.balanza1, r.balanza2, r.temp1, r.temp2, r.hum1, r.hum2];
+  const allNumsOk = nums.every(v => typeof v === "number" && Number.isFinite(v) && v !== 0);
+
+  // Puerta debe venir con texto (Abierto/Cerrado)
+  const doorOk = typeof r.puerta === "string" && r.puerta.trim() !== "";
+
+  // Fecha válida ya la garantiza rowsToObjects, lo reafirmamos:
+  const dtOk = r.fechaHora instanceof Date && !isNaN(r.fechaHora);
+
+  return dtOk && allNumsOk && doorOk;
+}
+
+function normalizeStr(s){
+  return (s ?? "")
+    .toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // "cerró" -> "cerro"
+    .trim()
+    .toLowerCase();
+}
+
+// Cuenta EXACTAMENTE "cerro" (tras normalización)
+function countDoorClosedOccurrences(rows){
+  let count = 0;
+  for (const r of rows){
+    // normaliza y elimina signos/puntuación para casos tipo "cerro."
+    const tok = normalizeStr(r.puerta).replace(/[^a-z]/g,'');
+    if (tok === 'cerro') count++;
+  }
+  return count;
+}
+function isDoorClosed(val){
+  const d = normalizeStr(val);
+  if (!d) return false;
+  // Cubre "cerró", "cerro", "cerrada", "cerrado", etc. y también "closed"
+  return d.includes("cerr") || d.includes("closed");
+}
+
+function countDoorClosuresTransition(rows){
+  // Cuenta SOLO cuando hay transición a "cerró" (no filas repetidas en cerrado)
+  let count = 0;
+  let prevClosed = false;
+
+  const sorted = rows
+    .filter(r => r.fechaHora instanceof Date && !isNaN(r.fechaHora))
+    .sort((a,b) => a.fechaHora - b.fechaHora);
+
+  for (const r of sorted){
+    const closed = isDoorClosed(r.puerta);
+    if (closed && !prevClosed) count++;
+    prevClosed = closed;
+  }
+  return count;
+}
+
+
+
+
+    /* ====== Render ====== */
+    function renderTable(data){
+      tbody.innerHTML = data.map(r=>{
+        const doorBadge = r.puerta.toLowerCase().includes('abier')
+          ? `<span class="badge badge-open">Abierto</span>`
+          : `<span class="badge badge-closed">Cerrado</span>`;
+        return `<tr>
+          <td>${r.fechaTexto}</td>
+          <td>${r.balanza1 ?? ''}</td>
+          <td>${r.balanza2 ?? ''}</td>
+          <td>${r.temp1 ?? ''}</td>
+          <td>${r.temp2 ?? ''}</td>
+          <td>${r.hum1 ?? ''}</td>
+          <td>${r.hum2 ?? ''}</td>
+          <td>${doorBadge}</td>
+        </tr>`;
+      }).join('');
+    }
+    function ensureCharts(){
+      if (tempChart && humChart) return;
+      tempChart = new Chart(document.getElementById('tempChart').getContext('2d'), {
+        type:'line',
+        data:{ labels:[], datasets:[
+          { label:'Temperatura1 (°C)', data:[], tension:0.2 },
+          { label:'Temperatura2 (°C)', data:[], tension:0.2 }
+        ]},
+        options:{ animation:false, scales:{ x:{display:false} } }
+      });
+      humChart = new Chart(document.getElementById('humChart').getContext('2d'), {
+        type:'line',
+        data:{ labels:[], datasets:[
+          { label:'Humedad1 (%)', data:[], tension:0.2 },
+          { label:'Humedad2 (%)', data:[], tension:0.2 }
+        ]},
+        options:{ animation:false, scales:{ x:{display:false}, y:{suggestedMin:0,suggestedMax:100} } }
+      });
+    }
+    function updateCharts(data){
+      ensureCharts();
+      const asc = [...data].reverse();
+      const labels = asc.map(r=>r.fechaTexto);
+      tempChart.data.labels = labels;
+      tempChart.data.datasets[0].data = asc.map(r=>r.temp1);
+      tempChart.data.datasets[1].data = asc.map(r=>r.temp2);
+      tempChart.update('none');
+
+      humChart.data.labels = labels;
+      humChart.data.datasets[0].data = asc.map(r=>r.hum1);
+      humChart.data.datasets[1].data = asc.map(r=>r.hum2);
+      humChart.update('none');
+    }
+
+    /* ====== Carga periódica ====== */
+/* ====== Carga periódica ====== */
+async function loadOnce(){
+  try{
+    const viewLimit = Math.max(50, Number(limitEl?.value) || 200);
+
+    // A) Descarga "gruesa" para la UI (todas las columnas) con límite moderado
+    const rowsRawMain = await fetchRowsJSONP(Math.max(viewLimit, 4000));
+    const parsedAll   = rowsToObjects(rowsRawMain);
+
+    // B) Descarga "liviana" para el contador (solo A,H) con límite alto (50k)
+    const rowsRawDoor = await fetchRowsJSONPDoor(50000);
+    const parsedDoor  = rowsDoorToObjects(rowsRawDoor);
+
+    // >>> Contador: cuenta cada fila que diga "cerro"
+    const doorClosures = countDoorClosedOccurrences(parsedDoor);
+
+    // Filtrado de filas completas para gráficos/tabla/cálculos/IA
+    const filtered = parsedAll.filter(isCompleteRow);
+    window.__latestData = filtered;
+
+    // Render UI con tu límite visual
+    const slice = filtered.slice(0, viewLimit);
+    renderTable(slice);
+    updateCharts(slice);
+
+    // Estado del hardware basándonos en la fecha del último registro disponible
+    const latestRow = parsedAll[0]; // último dato crudo que llegó desde la hoja
+    if (latestRow && latestRow.fechaHora instanceof Date){
+      updateHardwareStatusFromDate(latestRow.fechaHora);
+    } else {
+      updateHardwareStatusFromDate(null);
+    }
+
+  }catch(e){
+    console.error(e);
+    statusEl.textContent = 'Error al cargar datos';
+    updateHardwareStatusFromDate(null);
+  }
+}
+
+    let timer=null;
+    function startPolling(){ clearInterval(timer); timer=setInterval(loadOnce, POLL_MS); }
+    refreshBtn.addEventListener('click', loadOnce);
+
+    /* ====== Acciones locales (sobre datos) ====== */
+    const MONTHS = { "enero":0,"febrero":1,"marzo":2,"abril":3,"mayo":4,"junio":5,"julio":6,"agosto":7,"septiembre":8,"setiembre":8,"octubre":9,"noviembre":10,"diciembre":11 };
+const FIELD_MAP = [
+  {
+    re:/balanza\s*1|peso\s*1|scale\s*1|bote\s*1|helado\s*1|bote\s+de\s+helado\s*1/i,
+    key:"balanza1",
+    label:"Bote de helado 1 (g)"
+  },
+  {
+    re:/balanza\s*2|peso\s*2|scale\s*2|bote\s*2|helado\s*2|bote\s+de\s+helado\s*2/i,
+    key:"balanza2",
+    label:"Bote de helado 2 (g)"
+  },
+  {re:/temperatura\s*1|t[°º]?\s*1|temp\s*1/i, key:"temp1", label:"Temperatura 1 (°C)"},
+  {re:/temperatura\s*2|t[°º]?\s*2|temp\s*2/i, key:"temp2", label:"Temperatura 2 (°C)"},
+  {re:/humedad\s*1|hum\s*1/i, key:"hum1", label:"Humedad 1 (%)"},
+  {re:/humedad\s*2|hum\s*2/i, key:"hum2", label:"Humedad 2 (%)"},
+  {re:/puerta|door/i, key:"puerta", label:"Puerta"},
+];
+
+function localSummary(question){
+  const data = window.__latestData || [];
+  if (!data.length) return null;
+
+  // ¿pide resumen/promedios/máximos/mínimos?
+  if (!/(resumen|resumir|promedio|m[aá]xim|m[ií]nim)/i.test(question)) return null;
+
+  const {from, to, label} = parseTimeRange(question.toLowerCase());
+  const slice = filterByRange(data, from, to);
+  if (!slice.length) return { ok:true, text:`No hay datos en ${label}.` };
+
+  const cols = [
+    { key:'balanza1', label:'Bote de helado 1 (g)',   unit:'g'  },
+    { key:'balanza2', label:'Bote de helado 2 (g)',   unit:'g'  },
+    { key:'temp1',    label:'Temperatura 1 (°C)',     unit:'°C' },
+    { key:'temp2',    label:'Temperatura 2 (°C)',     unit:'°C' },
+    { key:'hum1',     label:'Humedad 1 (%)',          unit:'%'  },
+    { key:'hum2',     label:'Humedad 2 (%)',          unit:'%'  },
+  ];
+
+  const parts = [];
+  for (const c of cols){
+    const vals = slice.map(r => r[c.key]).filter(Number.isFinite);
+    if (!vals.length) continue;
+
+    const mean = avg(vals);
+    const min  = Math.min(...vals);
+    const max  = Math.max(...vals);
+
+    const u = c.unit ? ` ${c.unit}` : '';
+    const promTxt = mean !== null ? mean.toFixed(2) : 'N/D';
+
+    parts.push(`• ${c.label}: prom ${promTxt}${u}, min ${min}${u}, max ${max}${u}`);
+  }
+
+  if (!parts.length) {
+    return { ok:true, text:`No hay columnas numéricas con datos en ${label}.` };
+  }
+
+  return {
+    ok:true,
+    text: `Resumen de ${label}:\n` + parts.join('\n')
+  };
+}
+
+    function parseField(q){ for (const f of FIELD_MAP) if (f.re.test(q)) return f; return null; }
+    function parseAgg(q){
+      if (/\b(promedio|media|average)\b/i.test(q)) return {fn:"avg", label:"promedio"};
+      if (/\b(m[aá]ximo|maxima|mayor|tope|max)\b/i.test(q)) return {fn:"max", label:"máximo"};
+      if (/\b(m[ií]nimo|minima|menor|min)\b/i.test(q))  return {fn:"min", label:"mínimo"};
+      if (/\b(suma|total|acumulado)\b/i.test(q))       return {fn:"sum", label:"suma"};
+      if (/\b(cuantos|cu[aá]ntos|conteo|cantidad|n[uú]mero)\b/i.test(q)) return {fn:"count", label:"conteo"};
+      if (/\b(tendencia|sube|baja)\b/i.test(q)) return {fn:"trend", label:"tendencia"};
+      if (/\b(ultima|[uú]ltima)\b.*\b(vez)\b.*\b(abr|cerr)/i.test(q)) return {fn:"door_last_change", label:"último cambio de puerta"};
+      if (/\b(veces|cu[aá]ntas)\b.*\b(abr[ií]o|abri[oó]|abrir|abierta)\b/i.test(q)) return {fn:"door_open_count", label:"veces que se abrió"};
+      return null;
+    }
+function parseTimeRange(q){
+  const now = new Date();
+  const H = 3600e3, D = 24*H, W = 7*D, M = 30*D;
+  let from=null, to=null, label="completo";
+
+  let m = q.match(/(?:ultima|[uú]ltima|ultimos|[uú]ltimos)\s+(\d{1,2})\s*(horas?|d[ií]as?)/i);
+  if (m){ const n=+m[1]; from = new Date(Date.now() - n * ( /hora/i.test(m[2]) ? H : D)); label=`últimas ${n} ${/hora/i.test(m[2])?'horas':'días'}`; return {from,to,label}; }
+
+  if (/ultimas?\s*24\s*h|ultimas?\s*24\s*horas?/i.test(q)) return {from:new Date(Date.now()-24*H),to:null,label:"últimas 24h"};
+  if (/\bhoy\b/i.test(q)){ const d=new Date(); d.setHours(0,0,0,0); return {from:d,to:null,label:"hoy"}; }
+  if (/\bayer\b/i.test(q)){ const d=new Date(); d.setHours(0,0,0,0); return {from:new Date(d.getTime()-D), to:new Date(d.getTime()), label:"ayer"}; }
+
+  // esta semana
+  if (/esta\s+semana/i.test(q)){ const d=new Date(); const wd=(d.getDay()+6)%7; d.setHours(0,0,0,0); return {from:new Date(d.getTime()-wd*D), to:null, label:"esta semana"}; }
+  // semana pasada
+  if (/semana\s+pasada/i.test(q)){ const today=new Date(); const wd=(today.getDay()+6)%7; const startThisWeek=new Date(today); startThisWeek.setHours(0,0,0,0); startThisWeek.setDate(startThisWeek.getDate()-wd); const startLastWeek=new Date(startThisWeek.getTime()-7*D); const endLastWeek=startThisWeek; return {from:startLastWeek, to:endLastWeek, label:"semana pasada"}; }
+
+  if (/(ultima|[uú]ltima)\s+semana/i.test(q)) return {from:new Date(Date.now()-W), to:null, label:"última semana"};
+  if (/este\s+mes/i.test(q)){ const d=new Date(now.getFullYear(), now.getMonth(),1); return {from:d,to:null,label:"este mes"}; }
+  if (/(ultimo|[uú]ltimo)\s+mes/i.test(q)) return {from:new Date(Date.now()-M), to:null, label:"último mes"};
+
+  m = q.match(/\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)\b(?:\s+de)?\s*(\d{4})?/i);
+  if (m){ const MONTHS={ "enero":0,"febrero":1,"marzo":2,"abril":3,"mayo":4,"junio":5,"julio":6,"agosto":7,"septiembre":8,"setiembre":8,"octubre":9,"noviembre":10,"diciembre":11 };
+    const month = MONTHS[m[1].toLowerCase()], year = m[2]?+m[2]:now.getFullYear(); const start=new Date(year,month,1,0,0,0,0), end=new Date(year,month+1,1,0,0,0,0); return {from:start,to:end,label:`${m[1]} ${year}`.trim()}; }
+
+  m = q.match(/del\s+(\d{1,2})\s+al\s+(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)(?:\s+de\s+(\d{4}))?/i);
+  if (m){ const MONTHS={ "enero":0,"febrero":1,"marzo":2,"abril":3,"mayo":4,"junio":5,"julio":6,"agosto":7,"septiembre":8,"setiembre":8,"octubre":9,"noviembre":10,"diciembre":11 };
+    const y=m[4]?+m[4]:now.getFullYear(), mo=MONTHS[m[3].toLowerCase()]; const from2=new Date(y,mo,+m[1],0,0,0,0), to2=new Date(y,mo,+m[2]+1,0,0,0,0); return {from:from2,to:to2,label:`del ${m[1]} al ${m[2]} de ${m[3]} ${y}`}; }
+  return {from:null,to:null,label};
+}
+
+// --- Detecta DOS ventanas de tiempo a partir de la pregunta (mes vs mes)
+// Soporta: "septiembre con octubre", "septiembre vs octubre", "comparar septiembre y octubre"
+function parseTwoTimeWindows(question){
+  const q = (question || "").toLowerCase();
+
+  // 1) Encuentra hasta dos meses nombrados
+  const MONTH_RE = /(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)(?:\s+de\s+(\d{4}))?/gi;
+  const found = [];
+  let m;
+  while ((m = MONTH_RE.exec(q)) && found.length < 2) {
+    const name = m[1];
+    const year = m[2] ? +m[2] : (new Date()).getFullYear();
+    const monthIdx = MONTHS[name]; // usa tu mapa existente
+    if (typeof monthIdx === "number") {
+      const from = new Date(year, monthIdx, 1, 0, 0, 0, 0);
+      const to   = new Date(year, monthIdx + 1, 1, 0, 0, 0, 0);
+      found.push({ from, to, label: `${name} ${year}` });
+    }
+  }
+
+  // 2) Sólo consideramos "modo comparación" si hay una señal de comparar
+  const wantsCompare = /(compara|comparar|comparación|vs|frente\s*a|contra)/i.test(q);
+
+  if (wantsCompare && found.length === 2) {
+    return { left: found[0], right: found[1] };
+  }
+  return null;
+}
+
+// --- Estadísticos por columna para una lista ya filtrada
+// --- Estadísticos por columna para una lista ya filtrada
+function computeStatsForSlice(slice){
+  const cols = ['balanza1','balanza2','temp1','temp2','hum1','hum2'];
+  const stats = {};
+
+  for (const c of cols){
+    const v = slice.map(r => r[c]).filter(Number.isFinite);
+    if (!v.length) continue;
+
+    const average = avg(v);
+    stats[c] = {
+      min:   Math.min(...v),
+      max:   Math.max(...v),
+      avg:   average !== null ? Number(average.toFixed(2)) : null,
+      first: v[v.length - 1], // más antiguo en el slice
+      last:  v[0]             // más reciente en el slice
+    };
+  }
+
+  // eventos de puerta
+  const evs   = doorEvents(slice);
+  const opens = evs.filter(e => e.state === 'Abierto').length;
+
+  return {
+    stats,
+    rows: slice.length,
+    door: {
+      openCount: opens,
+      lastChange: evs[evs.length-1] || null
+    }
+  };
+}
+
+// --- Construye un DATA CONTEXT para comparación de dos ventanas
+function buildComparisonContext(leftWin, rightWin){
+  const data = window.__latestData || [];
+
+  // Slices de cada ventana de tiempo (p. ej. septiembre y octubre)
+  const leftSlice  = filterByRange(data,  leftWin.from,  leftWin.to);
+  const rightSlice = filterByRange(data, rightWin.from, rightWin.to);
+
+  // Estadísticos por columna (min, max, avg, etc.)
+  const leftStats  = computeStatsForSlice(leftSlice);
+  const rightStats = computeStatsForSlice(rightSlice);
+
+  // Ventas y reposiciones por producto en cada ventana
+  const leftSales  = computeSalesForSlice(leftSlice);
+  const rightSales = computeSalesForSlice(rightSlice);
+
+  // Diferencias de promedios entre ventanas (para ayudar al modelo)
+  const delta = {};
+  for (const k of Object.keys(leftStats.stats || {})){
+    if (rightStats.stats && rightStats.stats[k]) {
+      const a = leftStats.stats[k].avg;
+      const b = rightStats.stats[k].avg;
+      if (Number.isFinite(a) && Number.isFinite(b)) {
+        delta[k] = {
+          avg_diff: Number((b - a).toFixed(2)),
+          avg_pct:  a ? Number(((b - a) / a * 100).toFixed(1)) : null
+        };
+      }
+    }
+  }
+
+  return {
+    mode: 'compare',
+
+    // Cada lado trae sus stats, puerta y ahora también ventas
+    left:  { label: leftWin.label,  ...leftStats,  sales: leftSales  },
+    right: { label: rightWin.label, ...rightStats, sales: rightSales },
+
+    // Resumen de ventas para comparación directa (opcional pero útil)
+    sales: {
+      left:  leftSales,
+      right: rightSales
+    },
+
+    delta
+  };
+}
+
+// --- Versión "lista para usar" del contexto: detecta si hay que comparar o no
+function buildSmartDataContext(question){
+  const cmp = parseTwoTimeWindows(question);
+  if (cmp) return buildComparisonContext(cmp.left, cmp.right);
+  // si no hay comparación, reutiliza tu contexto original "simple"
+  return buildDataContext(question);
+}
+
+
+
+
+    function filterByRange(data, from, to){
+      return data.filter(r=>{
+        const t = r.fechaHora?.getTime?.();
+        if (!t) return false;
+        if (from && t < from.getTime()) return false;
+        if (to && t >= to.getTime()) return false;
+        return true;
+      });
+    }
+
+function doorEvents(list){
+  const asc = [...(list || [])].reverse();  // más viejo → más nuevo
+  const events = [];
+  let prev = null;
+
+  for (const r of asc){
+    const isOpen = typeof r.puerta === 'string'
+      ? r.puerta.toLowerCase().includes('abier')
+      : false;
+    if (prev === null){ prev = isOpen; continue; }
+    if (isOpen !== prev){
+      events.push({
+        at: r.fechaHora,         // Date para cálculos
+        atText: r.fechaTexto,    // ← TEXTO EXACTO de la hoja
+        state: isOpen ? 'Abierto' : 'Cerrado'
+      });
+      prev = isOpen;
+    }
+  }
+  return events;
+}
+
+// Calcula ventas y reposiciones por producto a partir de una lista de filas
+// slice: array de objetos { fechaHora, balanza1, balanza2, ... }
+function computeSalesForSlice(slice){
+  const asc = [...(slice || [])].sort((a,b) => a.fechaHora - b.fechaHora);
+
+  // Umbral para ignorar ruido de sensor (en gramos)
+  const THRESHOLD = 10;
+
+  const res = {
+    balanza1: { sold_g: 0, restocked_g: 0, restocks: 0 },
+    balanza2: { sold_g: 0, restocked_g: 0, restocks: 0 }
+  };
+
+  for (let i = 1; i < asc.length; i++){
+    const prev = asc[i-1];
+    const curr = asc[i];
+
+    // --- Producto 1 ---
+    if (Number.isFinite(prev.balanza1) && Number.isFinite(curr.balanza1)){
+      const d1 = curr.balanza1 - prev.balanza1; // >0 reposición, <0 venta
+      if (d1 < -THRESHOLD){
+        res.balanza1.sold_g += -d1;    // suma gramos vendidos
+      } else if (d1 > THRESHOLD){
+        res.balanza1.restocked_g += d1;
+        res.balanza1.restocks += 1;
+      }
+    }
+
+    // --- Producto 2 ---
+    if (Number.isFinite(prev.balanza2) && Number.isFinite(curr.balanza2)){
+      const d2 = curr.balanza2 - prev.balanza2;
+      if (d2 < -THRESHOLD){
+        res.balanza2.sold_g += -d2;
+      } else if (d2 > THRESHOLD){
+        res.balanza2.restocked_g += d2;
+        res.balanza2.restocks += 1;
+      }
+    }
+  }
+
+  // Redondeo bonito
+  for (const key of ["balanza1","balanza2"]){
+    res[key].sold_g       = Number(res[key].sold_g.toFixed(2));
+    res[key].restocked_g  = Number(res[key].restocked_g.toFixed(2));
+  }
+
+  return res;
+}
+
+
+
+
+function localAnswer(question){
+  const data = window.__latestData || [];
+  if (!data.length) return null;
+
+  const q = (question || "").toLowerCase();
+  const field = parseField(q);
+  const agg   = parseAgg(q);
+  const {from, to, label} = parseTimeRange(q);
+  const slice = filterByRange(data, from, to);
+
+  if (!agg) return null;
+
+  // ---- Preguntas de puerta ----
+  if (agg.fn === "door_last_change"){
+    const evs  = doorEvents(slice);
+    const last = evs[evs.length-1];
+    if (!last) {
+      return {ok:true, text:`No hay cambios de puerta detectados en ${label}.`};
+    }
+    const when = last.at instanceof Date ? last.at.toLocaleString() : String(last.at);
+    return {ok:true, text:`Último cambio de puerta en ${label}: ${when} → ${last.state}.`};
+  }
+
+  if (agg.fn === "door_open_count"){
+    const opens = doorEvents(slice).filter(e=>e.state==='Abierto').length;
+    return {
+      ok:true,
+      text:`La puerta se abrió ${opens} ${opens===1?'vez':'veces'} en ${label}.`
+    };
+  }
+
+  // Si no es puerta, necesitamos un campo numérico válido
+  if (!field || field.key === "puerta") return null;
+
+  const vals = slice.map(r => r[field.key]).filter(Number.isFinite);
+  if (!vals.length) {
+    return {ok:true, text:`No hay datos numéricos de ${field.label} para ${label}.`};
+  }
+
+  let value, extra = "";
+  switch(agg.fn){
+    case "avg":   value = Number(avg(vals).toFixed(2)); break;
+    case "max":   value = Math.max(...vals); break;
+    case "min":   value = Math.min(...vals); break;
+    case "sum":   value = Number(vals.reduce((a,b)=>a+b,0).toFixed(2)); break;
+    case "count": value = vals.length; break;
+    case "trend": {
+      const first = vals[vals.length-1];
+      const last  = vals[0];
+      const diff  = Number((last - first).toFixed(2));
+      value = diff;
+      extra = diff>0 ? "tendencia al alza"
+                     : diff<0 ? "tendencia a la baja"
+                              : "sin cambio neto";
+      break;
+    }
+    default:
+      return null;
+  }
+
+  // Unidades según el tipo de campo
+  let unit = "";
+  if (/temp/i.test(field.key))      unit = "°C";
+  else if (/hum/i.test(field.key)) unit = "%";
+  else if (/balanza/i.test(field.key)) unit = "g";
+
+  const pretty = unit ? `${value} ${unit}` : String(value);
+  let msg = `${agg.label} de ${field.label} en ${label}: ${pretty}.`;
+  if (agg.fn === "trend") {
+    msg += ` (${extra})`;
+  }
+
+  const latest = slice[0];
+  if (latest && typeof latest[field.key] === 'number') {
+    msg += ` Último valor: ${latest[field.key]}${unit ? ' '+unit : ''} (${fmtTS(latest.fechaHora)}).`;
+  }
+
+  return {ok:true, text: msg};
+}
+
+    /* ====== DATA CONTEXT (fallback a IA) ====== */
+function buildDataContext(question){
+  const data = window.__latestData || [];
+  if (!data.length) return { note: "No hay datos cargados aún." };
+
+  const {from, to, label} = parseTimeRange((question || "").toLowerCase());
+  const slice = filterByRange(data, from, to);
+
+  // Estadísticos por columna
+  const cols = ['balanza1','balanza2','temp1','temp2','hum1','hum2'];
+  const colStats = {};
+  for (const c of cols){
+    const v = slice.map(r=>r[c]).filter(Number.isFinite);
+    if (!v.length) continue;
+    const mean = avg(v);
+    colStats[c] = {
+      min: Math.min(...v),
+      max: Math.max(...v),
+      avg: mean !== null ? Number(mean.toFixed(2)) : null,
+      first: v[v.length-1],
+      last:  v[0]
+    };
+  }
+    // Ventas y reposiciones por producto (en gramos)
+  const sales = computeSalesForSlice(slice);
+
+
+  // Metadatos de columnas (para que el modelo entienda el significado)
+const columnMeta = {
+  balanza1: {
+    nombre: "Bote de helado 1 (g)",
+    tipo: "producto",
+    descripcion: "Peso del producto 1 (bote de helado 1) medido en la balanza 1. Cuando el peso baja entre lecturas, significa venta (salida de producto); cuando sube, significa reposición de inventario."
+  },
+  balanza2: {
+    nombre: "Bote de helado 2 (g)",
+    tipo: "producto",
+    descripcion: "Peso del producto 2 (bote de helado 2) medido en la balanza 2. Cuando el peso baja entre lecturas, significa venta (salida de producto); cuando sube, significa reposición de inventario."
+  },
+  temp1: {
+    nombre: "Temperatura 1 (°C)",
+    tipo: "temperatura",
+    descripcion: "Temperatura ambiental en la zona inferior o fondo del refrigerador, medida por el sensor 1. No está asociada a un producto específico, sino al ambiente donde se encuentran todos los productos."
+  },
+  temp2: {
+    nombre: "Temperatura 2 (°C)",
+    tipo: "temperatura",
+    descripcion: "Temperatura ambiental en la zona superior o parte alta del refrigerador, medida por el sensor 2. No está asociada a un producto específico, sino al ambiente general del refrigerador."
+  },
+  hum1: {
+    nombre: "Humedad 1 (%)",
+    tipo: "humedad",
+    descripcion: "Humedad relativa en la zona inferior o fondo del refrigerador (cerca del sensor 1). Afecta a todos los productos que se almacenan en esa zona, no solo a un bote en particular."
+  },
+  hum2: {
+    nombre: "Humedad 2 (%)",
+    tipo: "humedad",
+    descripcion: "Humedad relativa en la zona superior o parte alta del refrigerador (cerca del sensor 2). Es una medida ambiental, no ligada a un único producto."
+  }
+};
+
+  // Eventos de puerta
+  
+  const events = doorEvents(slice);
+  const openCount  = events.filter(e => e.state === 'Abierto').length;
+  const lastOpen   = [...events].reverse().find(e => e.state === 'Abierto') || null;
+  const lastChange = events[events.length-1] || null;
+
+
+  // Primer y último registro del rango (TEXTO de la hoja)
+  const firstRow = slice[slice.length-1] || null;
+  const lastRow  = slice[0] || null;
+
+  // Muestra (capada) con texto de la hoja
+  const sample = slice.slice(0, 200).map(r => ({
+    sheet_t: r.fechaTexto,  // texto tal como está en la hoja
+    b1: r.balanza1, b2: r.balanza2,
+    t1: r.temp1, t2: r.temp2,
+    h1: r.hum1, h2: r.hum2,
+    p: r.puerta
+  }));
+
+  return {
+    window: label,
+    columns: columnMeta,
+    range: {
+      sheet_from: firstRow ? firstRow.fechaTexto : null,
+      sheet_to:   lastRow  ? lastRow.fechaTexto  : null,
+      rows: slice.length
+    },
+    latest: lastRow ? {
+      sheet_at: lastRow.fechaTexto,
+      balanza1: lastRow.balanza1, balanza2: lastRow.balanza2,
+      temp1: lastRow.temp1, temp2: lastRow.temp2,
+      hum1: lastRow.hum1,  hum2: lastRow.hum2,
+      puerta: lastRow.puerta
+    } : null,
+    stats: colStats,
+    sales,   // 👈 NUEVO: ventas y reposiciones por producto
+    door: {
+      openCount,
+      lastOpen:   lastOpen   ? { sheet_at: lastOpen.atText,   state: lastOpen.state }   : null,
+      lastChange: lastChange ? { sheet_at: lastChange.atText, state: lastChange.state } : null
+    },
+    sample
+  };
+
+}
+
+
+
+/* ====== Llamada al proxy (con fallback) ====== */
+async function orChat(userText){
+  setChatStatus('Enviando…');
+
+  // 0) Si algún día quieres reactivar modo mixto, aquí irían las respuestas locales
+  // if (!RELY_ON_MODEL) {
+  //   const local = localAnswer(userText) || localSummary(userText);
+  //   if (local?.ok) { setChatStatus('Respuesta local'); return local.text; }
+  // }
+
+  // 1) Construir el contexto de datos para que el MODELO haga los cálculos
+  const useCtx = !!useDataCtx.checked;
+  const ctx    = useCtx ? buildSmartDataContext(userText) : null;
+
+  const messages = [
+    {
+      role: "system",
+      content: `
+Eres un analista de datos de una heladería comercial. En la hoja de cálculo hay lecturas de un refrigerador con:
+- Inventario en gramos de dos productos: la columna "balanza1" corresponde al Bote de helado 1 (producto 1) y la columna "balanza2" al Bote de helado 2 (producto 2).
+- Temperaturas "temp1" y "temp2" (°C) y humedades "hum1" y "hum2" (%), que son mediciones AMBIENTALES:
+   • "temp1" y "hum1" corresponden a un sensor ubicado en la zona inferior o fondo del refrigerador.
+   • "temp2" y "hum2" corresponden a un sensor ubicado en la zona superior o parte alta del refrigerador.
+  Estas temperaturas y humedades NO están asociadas directamente a un producto en particular, sino al ambiente interno del refrigerador que afecta a todos los productos.
+- Estado de la puerta del refrigerador ("puerta": Abierto/Cerrado).
+
+El front-end ya interpretó la pregunta y te envía un JSON llamado "DATA CONTEXT" con:
+- "window" y "range": resumen del rango de fechas que debes considerar. 
+  Si el usuario NO pidió un rango específico, "range" cubre TODA la historia disponible.
+- "latest": último registro de ese rango (estado más reciente).
+- "oldest": primer registro del rango (estado más antiguo).
+- "stats": mínimos, máximos, promedios y valores inicial/final por columna en ese rango.
+- "door": eventos de puerta (veces que se abrió, último cambio, etc.).
+- "sales": ventas y reposiciones aproximadas por producto dentro del rango:
+   • "sales.balanza1.sold_g" y "sales.balanza2.sold_g" son la suma de todas las caídas de peso significativas (gramos vendidos).
+   • "restocked_g" y "restocks" indican reposiciones de inventario (subidas de peso).
+- "columns": descripciones de cada columna (tipo de dato, unidades, significado).
+- "sample": una muestra de filas reales de la hoja para que veas ejemplos concretos.
+
+Interpretación de ventas:
+- El valor de "balanza1" y "balanza2" representa el stock en gramos dentro del refrigerador.
+- Cuando el peso BAJA entre dos lecturas, se interpreta como VENTA (salida de producto).
+- Cuando el peso SUBE entre dos lecturas, se interpreta como REPOSICIÓN de inventario (se colocó un bote nuevo o se rellenó).
+
+Instrucciones IMPORTANTES:
+1) Si preguntan por el dato más antiguo o desde cuándo hay registros, responde usando "oldest" y/o "range.sheet_from".
+2) Si preguntan por el dato más reciente, el estado actual o el último valor, usa "latest" y/o "range.sheet_to".
+3) Si preguntan por ventas, consumo, "qué helado se vendió más", "qué producto salió más", etc.:
+   - Usa SIEMPRE los campos de "sales" (por ejemplo "sales.balanza1.sold_g" y "sales.balanza2.sold_g") para comparar gramos vendidos.
+   - NO confundas stock promedio con ventas: un peso promedio más alto NO significa que se vendió más, sino que había más producto almacenado.
+   - Si no hay datos suficientes para estimar ventas en el rango, indícalo claramente.
+4) Para promedios, máximos, mínimos, tendencias o comparaciones de niveles (stock, temperatura, humedad), usa SIEMPRE los números de "stats" y/o de "sample". No inventes valores ni fechas.
+5) Cuando analices temperaturas y humedades, recuerda que son ambientales:
+   - No digas "temperatura del producto 1" o "humedad del producto 2".
+   - Describe siempre "sensor inferior (temp1/hum1)" y "sensor superior (temp2/hum2)" o "parte baja" vs "parte alta del refrigerador".
+6) Usa EXCLUSIVAMENTE los campos "sheet_*" y "sample[].sheet_t" para mencionar fechas/horas (son texto tal como figuran en la hoja). No cites campos ISO internos como "at", "from" o "to".
+7) Si el usuario pide análisis de un periodo donde no hay datos, explica claramente que no hay registros disponibles en ese intervalo.
+8) Responde SIEMPRE en español, en formato de 3–8 viñetas claras, sin devolver JSON ni código.
+`
+  },
+    { role: "user", content: userText }
+  ];
+
+  if (ctx) {
+    messages.push({
+      role: "user",
+      content: "DATA CONTEXT (JSON):\n" + JSON.stringify(ctx)
+    });
+  }
+
+  const payload = {
+    model: OR_MODEL_ID,    // deepseek/deepseek-chat-v3-0324
+    messages,
+    temperature: 0.3,
+    max_tokens: 3000,      // margen amplio para respuestas más completas
+    max_output_tokens: 3000
+  };
+
+  let res, raw, data;
+  try {
+    res = await fetch(OR_PROXY_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    raw = await res.text();
+    try { data = JSON.parse(raw); } catch { /* puede venir en texto plano */ }
+  } catch (e) {
+    throw new Error("No se pudo contactar al proveedor. Reintenta en unos segundos.");
+  }
+
+  // 2) ¿el upstream devolvió cuerpo con error/rate-limit aunque HTTP sea 200?
+  const upstreamError = (!res.ok) || isUpstreamErrorOrRateLimited(data || raw);
+
+  // 3) Extraer texto del modelo (cubre Chat Completions y Responses API)
+  let text = !upstreamError
+    ? (extractAssistantText(data) ?? extractAssistantText(raw))
+    : null;
+
+  // 4) Fallback automático: reintentar con openrouter/auto
+  if (upstreamError || !text) {
+    const r2 = await fetch(OR_PROXY_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "openrouter/auto",
+        messages,
+        max_tokens: 1200,
+        max_output_tokens: 1200,
+        temperature: 0.3
+      })
+    });
+    const raw2 = await r2.text(); let d2 = null;
+    try { d2 = JSON.parse(raw2); } catch {}
+    text = extractAssistantText(d2) ?? extractAssistantText(raw2);
+
+    if (!r2.ok || !text) {
+      throw new Error("El proveedor está temporalmente saturado. Intenta de nuevo en breve.");
+    }
+  }
+
+  setChatStatus('Listo');
+  return (text || '').trim() || '(sin texto)';
+}
+
+const assistantEl = document.getElementById('assistant');
+const toggleBtn   = document.getElementById('toggleChat');
+if (toggleBtn) {
+  toggleBtn.addEventListener('click', () => {
+    assistantEl.classList.toggle('collapsed');
+    const collapsed = assistantEl.classList.contains('collapsed');
+    toggleBtn.setAttribute('aria-expanded', (!collapsed).toString());
+    toggleBtn.title = collapsed ? 'Expandir' : 'Minimizar';
+    toggleBtn.textContent = collapsed ? '▣' : '▁';
+  });
+}
+
+
+
+    /* ====== Chat ====== */
+    formEl.addEventListener('submit', async (ev)=>{
+      ev.preventDefault();
+      const text = (inputEl.value || '').trim();
+      if (!text) return;
+      inputEl.value=''; addMsg('user', text);
+      try{ const reply = await orChat(text); addMsg('assistant', reply || '(sin texto)'); setChatStatus('Listo'); }
+      catch(e){ addMsg('assistant', String(e), true); setChatStatus('Error'); }
+    });
+
+    /* ====== INIT ====== */
+    async function init(){
+      await loadOnce();
+      startPolling();
+      addMsg('assistant', 'Hola, soy un asistente virtual que te ayuda a navegar, analizar y consultar la información de tu refrigerador. Puedes preguntarme cosas como: “promedio del peso del bote de helado 1 (g) esta semana”, “comparar el bote de helado 1 y 2 en octubre”, “máxima temperatura de las últimas 24 horas” o “¿cuántas veces se abrió la puerta hoy?”."');
+      setChatStatus('Listo');
+    }
+  
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

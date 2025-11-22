@@ -1,0 +1,10 @@
+name = "openrouter-proxy"
+main = "src/index.js"
+compatibility_date = "2025-10-11"
+
+[vars]
+OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+DEFAULT_MODEL   = "deepseek/deepseek-chat-v3-0324"
+
+[build]
+upload.format = "modules"
