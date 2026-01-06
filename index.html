@@ -78,7 +78,7 @@
   }
 
     .chart-card{
-    height: 500px;               /* ⇠ ajusta este valor si las quieres aún más pequeñas */
+    height: 500px;              
     background:#0d1425;
     border:1px solid #1f2937;
     border-radius:8px;
@@ -198,13 +198,13 @@
   <!-- ================= LÓGICA ================= -->
   <script type="module">
     /* ====== CONFIG ====== */
-    const OR_PROXY_URL = "https://or-proxy.refrigerador.workers.dev/chat"; // ← AJÚSTALO
+    const OR_PROXY_URL = "https://or-proxy.refrigerador.workers.dev/chat"; // 
     const OR_MODEL_ID  = "deepseek/deepseek-chat-v3-0324";
     const SHEET_ID     = "1d9NtgC2QE3qoGD3V7gs1rs-yHQq5ta1vV-cjd_1TY0s";
     const SHEET_NAME   = "Hoja 1";
     const POLL_MS      = 3000;
-    // --- Nuevo: depender del modelo (sin respuestas locales)
-const RELY_ON_MODEL = true; // pon false si algún día quieres reactivar las respuestas locales
+    // depender del modelo (sin respuestas locales)
+const RELY_ON_MODEL = true; // pon false si algún día se quiere reactivar las respuestas locales
 
 // -------- Zona horaria de visualización (IANA) --------
 // Ejemplos: "America/Bogota" (UTC-5 fijo), "America/Chicago" (DST), "America/Lima"
@@ -223,7 +223,7 @@ function resolvedTZ(){
     : Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
-// → "11/10/2025 16:46:15" (24h) en la TZ resuelta; nunca lanza
+
 function formatLocal(d) {
   if (!(d instanceof Date) || isNaN(d)) return "";
   const tz = resolvedTZ();
